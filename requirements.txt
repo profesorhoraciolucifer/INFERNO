@@ -1,0 +1,42 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# LangChain & AI
+langchain==0.1.0
+langchain-openai==0.0.5
+langgraph==0.0.15
+
+# HTTP & Network
+requests==2.31.0
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Database & Storage
+sqlalchemy==2.0.23
+alembic==1.13.1
+psycopg2-binary==2.9.9
+
+# Base44 Integration
+base44-sdk==1.0.0
+
+# Utilities
+python-dotenv==1.0.0
+python-multipart==0.0.6
+pytz==2023.3
+
+# Logging & Monitoring
+python-json-logger==2.0.7
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.12.0
+pylint==3.0.3
+mypy==1.7.1
+
+# Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
