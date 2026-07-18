@@ -1,0 +1,57 @@
+"""Módulo Supervisor - Monitoreo de todas las Apps en Base44.
+
+El Supervisor vigila, monitorea y reporta el estado de todas las aplicaciones
+registradas en Base44 bajo @horacio-luciani.
+"""
+
+import logging
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+import aiohttp
+from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+class AppSupervisor:
+    """Supervisor de aplicaciones en Base44."""
+    
+    def __init__(self):
+        """Inicializar el supervisor."""
+        self.base44_url = settings.base44_api_url
+        self.base44_api_key = settings.base44_api_key
+        self.apps_cache = {}
+        self.monitoring_status = {}
+        logger.info("🔥 Supervisor de Apps activado")
+    
+    async def get_all_apps(self) -> List[Dict[str, Any]]:
+        """Obtener todas las apps de Base44.
+        
+        Returns:
+            Lista de aplicaciones
+        """
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.base44_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.base44_url}/apps/@horacio-luciani",
+                    headers=headers
+                ) as response:
+                    if response.status == 200:
+                        apps = await response.json()
+                        self.apps_cache = {app.get('id'): app for app in apps}
+                        logger.info(f"✅ {len(apps)} aplicaciones cargadas desde Base44")
+                        return apps
+                    else:
+                        logger.error(f"Error obteniendo apps: {response.status}")
+                        return []
+        except Exception as e:
+            logger.error(f"Error conectando a Base44: {str(e)}")
+            return []
+    
+    async def monitor_app(\n        self,\n        app_id: str\n    ) -> Dict[str, Any]:\n        \"\"\"Monitorear una aplicación específica.\n        \n        Args:\n            app_id: ID de la aplicación\n        \n        Returns:\n            Estado y métricas de la app\n        \"\"\"\n        try:\n            headers = {\n                \"Authorization\": f\"Bearer {self.base44_api_key}\",\n                \"Content-Type\": \"application/json\"\n            }\n            \n            async with aiohttp.ClientSession() as session:\n                async with session.get(\n                    f\"{self.base44_url}/apps/@horacio-luciani/{app_id}\",\n                    headers=headers\n                ) as response:\n                    if response.status == 200:\n                        app_data = await response.json()\n                        status = {\n                            \"app_id\": app_id,\n                            \"name\": app_data.get('name', 'Unknown'),\n                            \"status\": \"online\" if response.status == 200 else \"offline\",\n                            \"last_checked\": datetime.utcnow().isoformat(),\n                            \"metrics\": app_data.get('metrics', {}),\n                            \"health\": await self._check_health(app_data)\n                        }\n                        \n                        self.monitoring_status[app_id] = status\n                        logger.info(f\"✅ App {app_id} monitoreada: {status['status']}\")\n                        \n                        return status\n                    else:\n                        status = {\n                            \"app_id\": app_id,\n                            \"status\": \"offline\",\n                            \"last_checked\": datetime.utcnow().isoformat(),\n                            \"error\": f\"HTTP {response.status}\"\n                        }\n                        self.monitoring_status[app_id] = status\n                        return status\n        except Exception as e:\n            logger.error(f\"Error monitoreando app {app_id}: {str(e)}\")\n            return {\n                \"app_id\": app_id,\n                \"status\": \"error\",\n                \"error\": str(e),\n                \"last_checked\": datetime.utcnow().isoformat()\n            }\n    \n    async def monitor_all_apps(self) -> Dict[str, Any]:\n        \"\"\"Monitorear todas las aplicaciones.\n        \n        Returns:\n            Estado de todas las apps\n        \"\"\"\n        logger.info(\"🔥 Iniciando monitoreo de todas las aplicaciones...\")\n        \n        apps = await self.get_all_apps()\n        monitoring_results = {\n            \"timestamp\": datetime.utcnow().isoformat(),\n            \"total_apps\": len(apps),\n            \"apps_status\": [],\n            \"summary\": {\n                \"online\": 0,\n                \"offline\": 0,\n                \"errors\": 0\n            }\n        }\n        \n        for app in apps:\n            app_id = app.get('id')\n            status = await self.monitor_app(app_id)\n            monitoring_results[\"apps_status\"].append(status)\n            \n            # Contar estados\n            if status.get('status') == 'online':\n                monitoring_results[\"summary\"][\"online\"] += 1\n            elif status.get('status') == 'offline':\n                monitoring_results[\"summary\"][\"offline\"] += 1\n            else:\n                monitoring_results[\"summary\"][\"errors\"] += 1\n        \n        logger.info(\n            f\"🔥 Monitoreo completado: \"\n            f\"{monitoring_results['summary']['online']} online, \"\n            f\"{monitoring_results['summary']['offline']} offline, \"\n            f\"{monitoring_results['summary']['errors']} errores\"\n        )\n        \n        return monitoring_results\n    \n    async def _check_health(self, app_data: Dict[str, Any]) -> Dict[str, Any]:\n        \"\"\"Evaluar la salud de una aplicación.\n        \n        Args:\n            app_data: Datos de la aplicación\n        \n        Returns:\n            Evaluación de salud\n        \"\"\"\n        health = {\n            \"status\": \"healthy\",\n            \"score\": 100,\n            \"issues\": []\n        }\n        \n        # Verificar uso de CPU\n        cpu = app_data.get('metrics', {}).get('cpu_usage', 0)\n        if cpu > 80:\n            health[\"issues\"].append(f\"CPU alta: {cpu}%\")\n            health[\"score\"] -= 20\n        \n        # Verificar memoria\n        memory = app_data.get('metrics', {}).get('memory_usage', 0)\n        if memory > 85:\n            health[\"issues\"].append(f\"Memoria alta: {memory}%\")\n            health[\"score\"] -= 20\n        \n        # Verificar errores recientes\n        errors = app_data.get('recent_errors', [])\n        if len(errors) > 5:\n            health[\"issues\"].append(f\"Múltiples errores: {len(errors)}\")\n            health[\"score\"] -= 15\n        \n        if health[\"score\"] < 50:\n            health[\"status\"] = \"warning\"\n        elif health[\"score\"] < 30:\n            health[\"status\"] = \"critical\"\n        \n        return health\n    
+    def get_monitoring_report(self) -> Dict[str, Any]:\n        \"\"\"Obtener reporte de monitoreo actual.\n        \n        Returns:\n            Reporte de monitoreo\n        \"\"\"\n        report = {\n            \"timestamp\": datetime.utcnow().isoformat(),\n            \"total_apps_monitored\": len(self.monitoring_status),\n            \"apps\": self.monitoring_status,\n            \"alerts\": []\n        }\n        \n        # Generar alertas\n        for app_id, status in self.monitoring_status.items():\n            if status.get('status') == 'offline':\n                report[\"alerts\"].append({\n                    \"type\": \"OFFLINE\",\n                    \"app_id\": app_id,\n                    \"message\": f\"App {app_id} está offline\",\n                    \"severity\": \"high\"\n                })\n            \n            health = status.get('health', {})\n            if health.get('status') == 'critical':\n                report[\"alerts\"].append({\n                    \"type\": \"HEALTH_CRITICAL\",\n                    \"app_id\": app_id,\n                    \"message\": f\"App {app_id} en estado crítico\",\n                    \"severity\": \"critical\"\n                })\n        \n        logger.info(f\"Reporte generado con {len(report['alerts'])} alertas\")\n        \n        return report\n    \n    async def restart_app(self, app_id: str) -> Dict[str, Any]:\n        \"\"\"Reiniciar una aplicación.\n        \n        Args:\n            app_id: ID de la aplicación\n        \n        Returns:\n            Resultado del reinicio\n        \"\"\"\n        try:\n            headers = {\n                \"Authorization\": f\"Bearer {self.base44_api_key}\",\n                \"Content-Type\": \"application/json\"\n            }\n            \n            async with aiohttp.ClientSession() as session:\n                async with session.post(\n                    f\"{self.base44_url}/apps/@horacio-luciani/{app_id}/restart\",\n                    headers=headers\n                ) as response:\n                    if response.status == 200:\n                        logger.info(f\"✅ App {app_id} reiniciada\")\n                        return {\n                            \"app_id\": app_id,\n                            \"action\": \"restart\",\n                            \"status\": \"success\"\n                        }\n                    else:\n                        logger.error(f\"Error reiniciando app {app_id}: {response.status}\")\n                        return {\n                            \"app_id\": app_id,\n                            \"action\": \"restart\",\n                            \"status\": \"failed\",\n                            \"error\": f\"HTTP {response.status}\"\n                        }\n        except Exception as e:\n            logger.error(f\"Error en restart: {str(e)}\")\n            return {\n                \"app_id\": app_id,\n                \"action\": \"restart\",\n                \"status\": \"error\",\n                \"error\": str(e)\n            }\n    \n    async def get_app_logs(self, app_id: str, limit: int = 100) -> List[Dict[str, Any]]:\n        \"\"\"Obtener logs de una aplicación.\n        \n        Args:\n            app_id: ID de la aplicación\n            limit: Número de logs a obtener\n        \n        Returns:\n            Lista de logs\n        \"\"\"\n        try:\n            headers = {\n                \"Authorization\": f\"Bearer {self.base44_api_key}\",\n                \"Content-Type\": \"application/json\"\n            }\n            \n            async with aiohttp.ClientSession() as session:\n                async with session.get(\n                    f\"{self.base44_url}/apps/@horacio-luciani/{app_id}/logs?limit={limit}\",\n                    headers=headers\n                ) as response:\n                    if response.status == 200:\n                        logs = await response.json()\n                        logger.info(f\"✅ {len(logs)} logs obtenidos de {app_id}\")\n                        return logs\n                    else:\n                        logger.error(f\"Error obteniendo logs: {response.status}\")\n                        return []\n        except Exception as e:\n            logger.error(f\"Error obteniendo logs: {str(e)}\")\n            return []\n
